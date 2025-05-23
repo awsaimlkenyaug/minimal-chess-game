@@ -1,6 +1,7 @@
 /**
  * Minimal Chess Game
  * A simple implementation of chess with basic rules and UI
+ * Includes AI opponent with multiple difficulty levels
  */
 
 // Chess piece Unicode symbols
@@ -36,8 +37,23 @@ class ChessGame {
         this.currentPlayer = 'white';
         this.selectedPiece = null;
         this.gameOver = false;
+        this.moveHistory = [];
+        
+        // Game mode settings
+        this.gameMode = 'computer'; // 'human' or 'computer'
+        this.difficulty = 'medium'; // 'easy', 'medium', or 'hard'
+        this.playerColor = 'white'; // 'white' or 'black'
+        
+        // Initialize AI
+        this.ai = new ChessAI(this.difficulty);
+        
         this.setupEventListeners();
         this.renderBoard();
+        
+        // If player is black, let AI make the first move
+        if (this.gameMode === 'computer' && this.playerColor === 'black') {
+            this.makeAIMove();
+        }
     }
 
     /**
@@ -68,7 +84,25 @@ class ChessGame {
      * Set up event listeners for the game
      */
     setupEventListeners() {
+        // Game controls
         document.getElementById('reset').addEventListener('click', () => this.resetGame());
+        document.getElementById('undo').addEventListener('click', () => this.undoMove());
+        
+        // Game settings
+        document.getElementById('game-mode').addEventListener('change', (e) => {
+            this.gameMode = e.target.value;
+            this.resetGame();
+        });
+        
+        document.getElementById('difficulty').addEventListener('change', (e) => {
+            this.difficulty = e.target.value;
+            this.ai.setDifficulty(this.difficulty);
+        });
+        
+        document.getElementById('player-color').addEventListener('change', (e) => {
+            this.playerColor = e.target.value;
+            this.resetGame();
+        });
     }
 
     /**
@@ -79,8 +113,17 @@ class ChessGame {
         this.currentPlayer = 'white';
         this.selectedPiece = null;
         this.gameOver = false;
+        this.moveHistory = [];
+        
+        document.getElementById('undo').disabled = true;
+        
         this.updateStatus(`${this.currentPlayer.charAt(0).toUpperCase() + this.currentPlayer.slice(1)}'s turn`);
         this.renderBoard();
+        
+        // If player is black, let AI make the first move
+        if (this.gameMode === 'computer' && this.playerColor === 'black') {
+            this.makeAIMove();
+        }
     }
 
     /**
@@ -90,10 +133,17 @@ class ChessGame {
         const boardElement = document.getElementById('board');
         boardElement.innerHTML = '';
         
+        // Determine board orientation based on player color
+        const isFlipped = this.playerColor === 'black';
+        
         for (let row = 0; row < 8; row++) {
             for (let col = 0; col < 8; col++) {
+                // Adjust coordinates if board is flipped
+                const displayRow = isFlipped ? 7 - row : row;
+                const displayCol = isFlipped ? 7 - col : col;
+                
                 const square = document.createElement('div');
-                square.className = `square ${(row + col) % 2 === 0 ? 'white' : 'black'}`;
+                square.className = `square ${(displayRow + displayCol) % 2 === 0 ? 'white' : 'black'}`;
                 square.dataset.row = row;
                 square.dataset.col = col;
                 
@@ -107,6 +157,15 @@ class ChessGame {
                 // Add click event
                 square.addEventListener('click', (e) => this.handleSquareClick(row, col));
                 
+                // Highlight last move
+                if (this.moveHistory.length > 0) {
+                    const lastMove = this.moveHistory[this.moveHistory.length - 1];
+                    if ((row === lastMove.fromRow && col === lastMove.fromCol) || 
+                        (row === lastMove.toRow && col === lastMove.toCol)) {
+                        square.classList.add('last-move');
+                    }
+                }
+                
                 boardElement.appendChild(square);
             }
         }
@@ -118,7 +177,10 @@ class ChessGame {
      * @param {number} col - Column index of clicked square
      */
     handleSquareClick(row, col) {
-        if (this.gameOver) return;
+        // Ignore clicks if game is over or if it's AI's turn
+        if (this.gameOver || (this.gameMode === 'computer' && this.currentPlayer !== this.playerColor)) {
+            return;
+        }
         
         const piece = this.board[row][col];
         
@@ -143,6 +205,12 @@ class ChessGame {
                 this.movePiece(this.selectedPiece.row, this.selectedPiece.col, row, col);
                 this.selectedPiece = null;
                 this.removeHighlights();
+                
+                // If playing against AI, make AI move
+                if (this.gameMode === 'computer' && !this.gameOver) {
+                    setTimeout(() => this.makeAIMove(), 500);
+                }
+                
                 return;
             }
             
@@ -161,6 +229,67 @@ class ChessGame {
     }
 
     /**
+     * Make a move for the AI
+     */
+    makeAIMove() {
+        document.getElementById('thinking').classList.remove('hidden');
+        
+        // Use setTimeout to allow UI to update before AI calculation
+        setTimeout(() => {
+            const aiColor = this.playerColor === 'white' ? 'black' : 'white';
+            const move = this.ai.getBestMove(this, aiColor);
+            
+            if (move) {
+                this.movePiece(move.fromRow, move.fromCol, move.toRow, move.toCol);
+            } else {
+                // No valid moves - game should be over
+                if (!this.gameOver) {
+                    this.gameOver = true;
+                    this.updateStatus('Game over: Stalemate');
+                }
+            }
+            
+            document.getElementById('thinking').classList.add('hidden');
+        }, 100);
+    }
+
+    /**
+     * Undo the last move (or last two moves in computer mode)
+     */
+    undoMove() {
+        if (this.moveHistory.length === 0) return;
+        
+        // In computer mode, undo both player's and AI's moves
+        const movesToUndo = this.gameMode === 'computer' ? 2 : 1;
+        
+        for (let i = 0; i < movesToUndo; i++) {
+            if (this.moveHistory.length === 0) break;
+            
+            const lastMove = this.moveHistory.pop();
+            
+            // Restore the moved piece
+            this.board[lastMove.fromRow][lastMove.fromCol] = lastMove.piece;
+            
+            // Restore the captured piece (if any)
+            this.board[lastMove.toRow][lastMove.toCol] = lastMove.capturedPiece;
+            
+            // Switch back to previous player
+            this.currentPlayer = this.currentPlayer === 'white' ? 'black' : 'white';
+        }
+        
+        // Reset game state
+        this.gameOver = false;
+        this.selectedPiece = null;
+        
+        // Update UI
+        this.updateStatus(`${this.currentPlayer.charAt(0).toUpperCase() + this.currentPlayer.slice(1)}'s turn`);
+        this.renderBoard();
+        
+        // Disable undo button if no more moves
+        document.getElementById('undo').disabled = this.moveHistory.length === 0;
+    }
+
+    /**
      * Highlight valid moves for a selected piece
      * @param {number} row - Row index of selected piece
      * @param {number} col - Column index of selected piece
@@ -176,8 +305,25 @@ class ChessGame {
         for (let r = 0; r < 8; r++) {
             for (let c = 0; c < 8; c++) {
                 if (this.isValidMove(row, col, r, c)) {
-                    const square = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
-                    square.classList.add('highlight');
+                    // Check if move would leave king in check
+                    const piece = this.board[row][col];
+                    const originalTarget = this.board[r][c];
+                    
+                    // Try the move
+                    this.board[r][c] = piece;
+                    this.board[row][col] = null;
+                    
+                    const kingInCheck = this.isKingInCheck(piece.color);
+                    
+                    // Undo the move
+                    this.board[row][col] = piece;
+                    this.board[r][c] = originalTarget;
+                    
+                    // Only highlight legal moves that don't leave king in check
+                    if (!kingInCheck) {
+                        const square = document.querySelector(`[data-row="${r}"][data-col="${c}"]`);
+                        square.classList.add('highlight');
+                    }
                 }
             }
         }
@@ -347,6 +493,20 @@ class ChessGame {
      */
     movePiece(fromRow, fromCol, toRow, toCol) {
         const piece = this.board[fromRow][fromCol];
+        const capturedPiece = this.board[toRow][toCol];
+        
+        // Save move to history
+        this.moveHistory.push({
+            fromRow,
+            fromCol,
+            toRow,
+            toCol,
+            piece: { ...piece },
+            capturedPiece: capturedPiece ? { ...capturedPiece } : null
+        });
+        
+        // Enable undo button
+        document.getElementById('undo').disabled = false;
         
         // Handle pawn promotion
         if (piece.type === 'pawn' && (toRow === 0 || toRow === 7)) {
@@ -358,19 +518,15 @@ class ChessGame {
         this.board[fromRow][fromCol] = null;
         
         // Check for check/checkmate
-        const isCheck = this.isKingInCheck(this.getOpponentColor());
-        const isCheckmate = isCheck && this.isCheckmate(this.getOpponentColor());
+        this.currentPlayer = this.currentPlayer === 'white' ? 'black' : 'white';
+        const isCheck = this.isKingInCheck(this.currentPlayer);
+        const isCheckmate = isCheck && this.isCheckmate(this.currentPlayer);
         
-        // Switch turns if not game over
-        if (!isCheckmate) {
-            this.currentPlayer = this.getOpponentColor();
-        } else {
-            this.gameOver = true;
-        }
-        
-        // Update status message
+        // Update game state
         if (isCheckmate) {
-            this.updateStatus(`Checkmate! ${piece.color.charAt(0).toUpperCase() + piece.color.slice(1)} wins!`);
+            this.gameOver = true;
+            const winner = this.currentPlayer === 'white' ? 'Black' : 'White';
+            this.updateStatus(`Checkmate! ${winner} wins!`);
         } else if (isCheck) {
             this.updateStatus(`Check! ${this.currentPlayer.charAt(0).toUpperCase() + this.currentPlayer.slice(1)}'s turn`);
         } else {
@@ -379,7 +535,7 @@ class ChessGame {
         
         // Highlight king if in check
         if (isCheck) {
-            this.highlightCheck(this.getOpponentColor());
+            this.highlightCheck(this.currentPlayer);
         }
         
         // Re-render the board
